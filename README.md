@@ -1,8 +1,7 @@
-# Metronome Artifacts repository
-Welcome to the Metronome repository for CoNEXT 2020 artifacts evaluation.
+# Metronome: adaptive packet retrieval in DPDK
+Welcome to the official Metronome repository: Metronome will be presented in the next weeks at CoNEXT 2020. Slides of the presentation and a video will be soon available.
 
-We provide the necessary code and documentation to test Metronome on your commodity servers 
-and replicate our experiments.
+If you are looking for the CONEXT artifacts evaluation, please switch to the ```artifacts``` branch.
 
 The repository is organized with two main directories:
 * **hr_sleep:** contains the kernel module to load the hr_sleep patch and a basic test to verify its correct working and the performance gain compared to Linux' nanosleep().
