@@ -17,7 +17,8 @@
 *	 
 *	 an add on installs a precise sleep service with very fine granularity 
 *
-* @author anonymous
+* @author Francesco Quaglia, Romolo Marotta
+* @author (add on) Francesco Quaglia, Giacomo Belocchi, Marco Faltelli
 *
 * @date November 8, 2019
 * @date February 8, 2020 (ad on)
@@ -47,7 +48,7 @@
 #include <linux/kallsyms.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("anonymous");
+MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Romolo Marotta <marotta@diag.uniroma1.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
 MODULE_DESCRIPTION("USCTM and an add on");
 
 
