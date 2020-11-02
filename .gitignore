@@ -1,0 +1,8 @@
+# Don't track content of these folders
+tests/l3fwd/build/
+tests/ipsec-gw/build/
+tests/ipsec-gw/test
+tests/FloWatcher-DPDK/run_to_completion/build/
+hr_sleep/*.o
+hr_sleep/*.ko
+hr_sleep/user/a.out
