@@ -37,7 +37,7 @@ int main(int argc, char** argv){
 
 
 	if(argc < 3){
-		printf("usage: prog sys_call-num sleep_timeout\n");
+		printf("usage: %s sys_call-num sleep_timeout\n", argv[0]);
 		return EXIT_FAILURE;
 	}	
 	
