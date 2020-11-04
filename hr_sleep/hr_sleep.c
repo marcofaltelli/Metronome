@@ -9,7 +9,7 @@
 * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 * A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 * 
-* @file usctm.c 
+* @file hr_sleep.c 
 * @brief This is the main source for the Linux Kernel Module which implements
 * 	 the runtime discovery of the syscall table position and of free entries (those 
 * 	 pointing to sys_ni_syscall) - the only assumption is that we have access to the
@@ -49,10 +49,10 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Romolo Marotta <marotta@diag.uniroma1.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
-MODULE_DESCRIPTION("USCTM and an add on");
+MODULE_DESCRIPTION("hr_sleep and an add on");
 
 
-#define MODNAME "USCTM"
+#define MODNAME "hr_sleep"
 
 
 extern int sys_vtpmo(unsigned long vaddr);

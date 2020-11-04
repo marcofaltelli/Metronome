@@ -3,7 +3,7 @@ This repository shows how to insert the hr_sleep syscall module and provides an 
 ## Setup
 Compile the module with ```make```, then load it by doing:
 ```(bash)
-$ sudo insmod the_usctm.ko
+$ sudo insmod hr_sleep.ko
 ```
 Then use the ```dmesg``` command to check that the module was mounted correctly and the new syscall number. Usually, the kernel will use entry 134 for inserting the hr_sleep() system call. If this does not happen, please keep in mind the syscall number.
 
