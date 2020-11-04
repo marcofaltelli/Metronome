@@ -9,12 +9,16 @@ Once compiled, you can run the example with
 ```(bash)
 $ sudo ./build/l3fwd -l <CORE1, CORE2,...,COREn> -n 3 -w <IFACE0> -w <IFACE1> -- -P -L -p 0x03 --config '(0,0,CORE1),(0,0,CORE2),...,(0,0,COREn)' -V <V VALUE> -m 1
 ```
-```-l``` specifies the list of cores on which DPDK will run
-```-w``` specifies the whitelist of the interfaces to be used through their PCI address
-```--config``` specifies the list of binding of NICs and their RX queues to the different cores. Specifically, it follows the path `(port,queue,core)`. In this example, we are using interface 0 as the RX NIC with an only RX queue and binding it to different cores
-```-V``` specifies the target V (vacation period) value in nanoseconds
-```-m``` specifies the sleep function to be used. 1 is for hr_sleep(), 0 is for nanosleep().
-```-a``` is a legacy parameter and should be removed soon. Please use only ```-a 1```
+* ```-l``` specifies the list of cores on which DPDK will run
+
+* ```-w``` specifies the whitelist of the interfaces to be used through their PCI address
+
+* ```--config``` specifies the list of binding of NICs and their RX queues to the different cores. Specifically, it follows the path `(port,queue,core)`. In this example, we are using interface 0 as the RX NIC with an only RX queue and binding it to different cores
+
+* ```-V``` specifies the target V (vacation period) value in nanoseconds
+
+* ```-m``` specifies the sleep function to be used. 1 is for hr_sleep(), 0 is for nanosleep().
+
 As an example, we may want to run l3fwd on cores 7,9,11 with interfaces 5e:00.0 and 5e:00.1 (interface 5e:00.0 is acting as the RX interface) and with a vacation period V of 10'000 ns. We then write the following code
 ```(bash)
 $ sudo ./build/l3fwd -l 7,9,11 -n 3 -w 5e:00.0 -w 5e:00.1 -- -P -L -p 0x03 --config '(0,0,7),(0,0,9),(0,0,11)' -V 10000 -m 1
