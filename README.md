@@ -3,7 +3,9 @@ Welcome to the official Metronome repository: Metronome will be presented in the
 
 Slides of the presentation and a video will be soon available.
 
-If you are looking for the CONEXT artifacts evaluation, please switch to the ```artifacts``` branch.
+We encourage you to clone Metronome and try it on your Linux machine. You can contact us using [our Slack channel](https://metronome-dpdk.slack.com) for any questions or trouble in using Metronome.
+
+If you are looking for the CoNEXT artifacts evaluation, please switch to the ```artifacts``` branch.
 
 The repository is organized with two main directories:
 * **hr_sleep:** contains the kernel module to load the hr_sleep patch and a basic test to verify its correct working and the performance gain compared to Linux' nanosleep().
