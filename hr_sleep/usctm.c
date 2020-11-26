@@ -9,12 +9,12 @@
 * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 * A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 * 
-* @file hrsleep.c 
+* @file usctm.c 
 * @brief This is the main source for the Linux Kernel Module which implements
 * 	 the runtime discovery of the syscall table position and of free entries (those 
-* 	 pointing to sys_ni_syscall). After the discovery, the hr_sleep syscall is installed.
+* 	 pointing to sys_ni_syscall) 
 *
-* @author Francesco Quaglia, Marco Faltelli, Giacomo Belocchi
+* @author Francesco Quaglia
 *
 * @date November 22, 2020
 */
@@ -44,12 +44,12 @@
 
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Francesco Quaglia <framcesco.quaglia@uniroma2.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
-MODULE_DESCRIPTION("hr_sleep");
+MODULE_AUTHOR("Francesco Quaglia <framcesco.quaglia@uniroma2.it>");
+MODULE_DESCRIPTION("USCTM");
 
 
 
-#define MODNAME "HR_SLEEP"
+#define MODNAME "USCTM"
 
 
 extern int sys_vtpmo(unsigned long vaddr);
@@ -164,88 +164,23 @@ int free_entries[MAX_FREE];
 module_param_array(free_entries,int,NULL,0660);//default array size already known - here we expose what entries are free
 
 
-#define NO (0)
-#define YES (NO+1)
-#define AUDIT if(0)
-
-
-typedef struct _control_record{
-        struct task_struct *task;
-        int pid;
-        int awake;
-        struct hrtimer hr_timer;
-} control_record;
-
-
-static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer ){
-
-        control_record *control;
-        struct task_struct *the_task;
-
-        control = (control_record*)container_of(timer,control_record, hr_timer);
-        control->awake = YES;
-        the_task = control->task;
-        wake_up_process(the_task);
-
-        return HRTIMER_NORESTART;
-}
-
-
-
 #define SYS_CALL_INSTALL
 
 #ifdef SYS_CALL_INSTALL
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-__SYSCALL_DEFINEx(2, _goto_sleep, unsigned long, nanosecs, unsigned long, tries){
+__SYSCALL_DEFINEx(2, _trial, unsigned long, A, unsigned long, B){
 #else
-asmlinkage long sys_goto_sleep(unsigned long nanosecs, unsigned long tries){
+asmlinkage long sys_trial(unsigned long A, unsigned long B){
 #endif
 
-        DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue 
-        control_record* control;
-        ktime_t ktime_interval;
-
-        AUDIT
-        printk("%s: thread %d requests a sleep for %lu nanosecs on %lu tries\n",MODNAME,current->pid,nanosecs,tries);
-
-       // if(nanosecs == 0) return 0;
-
-        AUDIT
-        printk("%s: thread %d going to sleep for %lu nanosecs\n",MODNAME,current->pid,nanosecs);
-
-        ktime_interval = ktime_set( 0, nanosecs );
-
-        control = (control_record*)((void*)current->stack + sizeof(struct thread_info));
-
-        hrtimer_init(&(control->hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-
-        control->hr_timer.function = &my_hrtimer_callback;
-
-redo:
-        control->task = current;
-        control->pid  = control->task->pid; //current->pid is more costly
-        control->awake = NO;
-
-        hrtimer_start(&(control->hr_timer), ktime_interval, HRTIMER_MODE_REL);
-
-
-        wait_event_interruptible(the_queue, control->awake == YES);
-
-        hrtimer_cancel(&(control->hr_timer));
-
-        AUDIT
-        printk("%s: thread %d exiting usleep\n",MODNAME, current->pid);
-
-	tries--;
-	if(tries>0) goto redo;
+        printk("%s: thread %d requests a trial sys_call with %lu and %lu as parameters\n",MODNAME,current->pid,A,B);
 
         return 0;
 
 }
 
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-static unsigned long sys_goto_sleep = (unsigned long) __x64_sys_goto_sleep;	
+static unsigned long sys_trial = (unsigned long) __x64_sys_trial;	
 #else
 #endif
 
@@ -302,16 +237,16 @@ int init_module(void) {
 
 #ifdef SYS_CALL_INSTALL
 	cr0 = read_cr0();
-    unprotect_memory();
-    hacked_syscall_tbl[FIRST_NI_SYSCALL] = (unsigned long*)sys_goto_sleep;
-    protect_memory();
+        unprotect_memory();
+        hacked_syscall_tbl[FIRST_NI_SYSCALL] = (unsigned long*)sys_trial;
+        protect_memory();
 	printk("%s: a sys_call with 2 parameters has been installed as a trial on the sys_call_table at displacement %d\n",MODNAME,FIRST_NI_SYSCALL);	
 #else
 #endif
 
-    printk("%s: module correctly mounted\n",MODNAME);
+        printk("%s: module correctly mounted\n",MODNAME);
 
-    return 0;
+        return 0;
 
 }
 
