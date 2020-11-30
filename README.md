@@ -1,7 +1,7 @@
 # Metronome: adaptive packet retrieval in DPDK
 Welcome to the official Metronome repository: Metronome will be presented in the next weeks at CoNEXT 2020.
 
-Slides of the presentation and a video will be soon available.
+Our paper is available [here](https://dl.acm.org/doi/pdf/10.1145/3386367.3432730). Slides of the presentation and a video will be soon available.
 
 We encourage you to clone Metronome and try it on your Linux machine. You can contact us using [our Slack channel](https://metronome-dpdk.slack.com) for any questions or trouble in using Metronome.
 
