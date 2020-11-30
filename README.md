@@ -11,7 +11,7 @@ The repository is organized with two main directories:
 * **hr_sleep:** contains the kernel module to load the hr_sleep patch and a basic test to verify its correct working and the performance gain compared to Linux' nanosleep().
 *  **tests:** contains the tests explained in Section 5.5 of the paper. We encourage reviewers to use the **l3fwd** experiment as it is the one used for evaluation in Section 5. 
 # Prerequisites
-The hr_sleep module was tested on Linux kernels ranging from 3.2 to 5.6. If you're having issues with other kernel versions, please contact us.
+The hr_sleep module was tested on Linux kernels ranging from 3.2 to 5.8. If you're having issues with other kernel versions, please contact us.
 
 This guide is intended for Intel x86 CPUs only.
 ## Isolate CPUs

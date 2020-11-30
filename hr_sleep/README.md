@@ -7,7 +7,7 @@ $ sudo ./load.sh
 ```
 Then use the ```dmesg``` command to check that the module was mounted correctly and the new syscall number. Usually, the kernel will use entry 134 for inserting the hr_sleep() system call. If this does not happen, please keep in mind the syscall number.
 
-We've tested the module insertion on Linux kernels ranging from 3.2 to 5.6. In case of any insertion problems, please contact us.
+We've tested the module insertion on Linux kernels ranging from 3.2 to 5.8. In case of any insertion problems, please contact us.
 
 Please note that the best performances can be achieved using the ```performance``` power governor.
 ## Run the example
