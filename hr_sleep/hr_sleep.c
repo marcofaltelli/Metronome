@@ -104,7 +104,7 @@ int validate_page(unsigned long *addr){
 	unsigned long page 	= (unsigned long) addr;
 	unsigned long new_page 	= (unsigned long) addr;
 	for(; i < PAGE_SIZE; i+=sizeof(void*)){		
-		new_page = page+i+SECOND_NI_SYSCALL*sizeof(void*);
+		new_page = page+i+SEVENTH_NI_SYSCALL*sizeof(void*);
 			
 		// If the table occupies 2 pages check if the second one is materialized in a frame
 		if( 
