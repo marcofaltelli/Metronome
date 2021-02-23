@@ -1,5 +1,5 @@
 # Metronome: adaptive packet retrieval in DPDK
-Welcome to the official Metronome repository: Metronome will be presented in the next weeks at CoNEXT 2020.
+Welcome to the official Metronome repository: Metronome was presented at CoNEXT 2020.
 
 Our paper is available [here](https://dl.acm.org/doi/pdf/10.1145/3386367.3432730). We also have a [video](https://dl.acm.org/doi/abs/10.1145/3386367.3432730#sec-supp) of the CoNEXT presentation.
 
