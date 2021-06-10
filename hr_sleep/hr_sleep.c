@@ -9,7 +9,7 @@
 * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 * A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 * 
-* @file hr_sleep.c 
+* @file usctm.c 
 * @brief This is the main source for the Linux Kernel Module which implements
 * 	 the runtime discovery of the syscall table position and of free entries (those 
 * 	 pointing to sys_ni_syscall) - the only assumption is that we have access to the
@@ -17,11 +17,9 @@
 *	 
 *	 an add on installs a precise sleep service with very fine granularity 
 *
-* @author Francesco Quaglia, Romolo Marotta
-* @author (add on) Francesco Quaglia, Giacomo Belocchi, Marco Faltelli
+* @author Francesco Quaglia, Marco Faltelli, Giacomo Belocchi
 *
-* @date November 8, 2019
-* @date February 8, 2020 (ad on)
+* @date June 10, 2021
 */
 
 #define EXPORT_SYMTAB
@@ -48,11 +46,11 @@
 #include <linux/kallsyms.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Romolo Marotta <marotta@diag.uniroma1.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
-MODULE_DESCRIPTION("hr_sleep and an add on");
+MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
+MODULE_DESCRIPTION("hr_sleep");
 
 
-#define MODNAME "hr_sleep"
+#define MODNAME "HR_SLEEP"
 
 
 extern int sys_vtpmo(unsigned long vaddr);
@@ -108,6 +106,7 @@ module_param_array(free_entries,int,NULL,0660);//default array size already know
 
 typedef struct _control_record{
         struct task_struct *task;
+//        int pid;
         int awake;
         struct hrtimer hr_timer;
 } control_record;
@@ -126,35 +125,47 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer ){
         return HRTIMER_NORESTART;
 }
 
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
 __SYSCALL_DEFINEx(1, _goto_sleep, long, nanoseconds){
 #else
 asmlinkage long sys_goto_sleep(long nanoseconds){
 #endif
 
-	DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue
-	control_record control;
-	ktime_t ktime_interval;
- 
+        DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue 
+        control_record control;
+        ktime_t ktime_interval;
+
 	if (nanoseconds < 0)
 		return -EINVAL;
 	if (nanoseconds == 0)
 		return 0;
 
-	ktime_interval = ktime_set(0, nanoseconds);
-	hrtimer_init(&(control.hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	control.hr_timer.function = &my_hrtimer_callback;
-	control.task = current;
-	control.awake = NO;
-	hrtimer_start(&(control.hr_timer), ktime_interval, HRTIMER_MODE_REL);
 
-	wait_event_interruptible(the_queue, control.awake == YES);
-	hrtimer_cancel(&(control.hr_timer));
+        ktime_interval = ktime_set(0, nanoseconds);
+
+        hrtimer_init(&(control.hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+
+        control.hr_timer.function = &my_hrtimer_callback;
+
+        control.task = current;
+        control.awake = NO;
+
+        hrtimer_start(&(control.hr_timer), ktime_interval, HRTIMER_MODE_REL);
+
+
+        wait_event_interruptible(the_queue, control.awake == YES);
+
+        hrtimer_cancel(&(control.hr_timer));
 
 	if (control.awake == 0)
 		return -EINTR;
-	return 0;
+
+        return 0;
+
 }
+
+
 
 int target;
 
