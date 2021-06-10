@@ -2,9 +2,61 @@
  * Copyright(c) 2010-2016 Intel Corporation
  */
 
+#include <rte_random.h>
+
 #ifndef __L3_FWD_H__
 #define __L3_FWD_H__
 
+//Metronome's l3fwd.h parameters
+#define SYSCALL_ENTRY	134
+#define CPU_FREQ 	2.1 //CPU nominal frequency (in GHz)
+#define TIMEOUT_LONG 500000
+#define ALPHA	0.75
+#define STATS	1
+
+#define MAX_QUEUES 4
+uint8_t num_queues;
+
+struct queue_metrics {
+	float lambda;
+	unsigned long timeout, pkts_to_queue;
+	unsigned long time1, time2;
+	bool first_time;
+	bool first_packet;
+	double rho;
+#if STATS
+	uint64_t lock_tries[32];
+	uint64_t lock_success[32];
+#endif
+};	
+
+unsigned long tries;
+struct queue_metrics qm[MAX_QUEUES];
+
+#if STATS
+uint64_t free_tries[32], busy_tries[32];
+struct rusage before, after;
+struct timeval cpu_before, cpu_after, cpu_total;
+static const char power_file[] = "/sys/class/powercap/intel-rapl:0/energy_uj";
+uint64_t power_before, power_after, power_total;
+uint64_t vacant_period[MAX_QUEUES], busy_period[MAX_QUEUES];
+uint64_t vacant_period_tries[MAX_QUEUES], busy_period_tries[MAX_QUEUES];
+unsigned long time_total, time_before;
+
+#endif
+
+//float lambda;
+//unsigned long timeout, pkts_to_queue;
+//unsigned long time1, time2;
+int custom_timer_mode;
+double num_cores;
+//bool first_time;
+//bool first_packet;
+
+//double rho;
+unsigned long vacation_period;
+
+//From here on, DPDK's parameters start
 #include <rte_vect.h>
 #include <x86intrin.h>
 #include <sys/time.h>
@@ -18,7 +70,7 @@
 #endif
 
 #define MAX_PKT_BURST     32
-#define BURST_TX_DRAIN_US 10 /* TX drain every ~100us */
+#define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 
 #define MAX_RX_QUEUE_PER_LCORE 16
 
@@ -49,27 +101,6 @@
 #define L3FWD_HASH_ENTRIES		(1024*1024*1)
 #endif
 #define HASH_ENTRY_NUMBER_DEFAULT	4
-
-#define TIMEOUT_LONG 500000
-#define ALPHA	0.75
-#define STATS	0
-
-float lambda;
-unsigned long timeout, pkts_to_queue;
-unsigned long time1, time2;
-int num_cores, custom_timer_mode;
-bool adaptive, first_time;
-pthread_cond_t condition;
-bool line_rate, first_packet;
-struct rusage before;
-unsigned long time_before;
-
-float delta, delta2, pkts_idle_mean, pkts_idle_var, count;
-
-unsigned long free_tries, busy_tries[16], total_tries, idle_tries;
-double mean_vacation, mean_busy, delta_vacation, delta2_vacation, var_vacation, process_tries;
-double rho;
-unsigned long vacation_period, timeout_short;
 
 struct mbuf_table {
 	uint16_t len;

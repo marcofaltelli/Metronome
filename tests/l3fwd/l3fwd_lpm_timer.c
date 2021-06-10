@@ -29,18 +29,23 @@
 #include <rte_lpm6.h>
 
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <math.h>
+#include <time.h>
 
 #include "l3fwd.h"
-//Please specify here your syscall numbr for hr_sleep() and your CPU nominal frequency (in GHz)
-#define SYSCALL_ENTRY       134
-#define CPU_FREQ	2.1
-unsigned long lock = 0;
+
+
+struct {
+	unsigned long lock;
+} multi_locks[MAX_QUEUES];
+
 
 #define LOCKED 		1
 #define UNLOCKED 	0
@@ -61,12 +66,11 @@ static inline int trylock(void * uadr){
 	return (r) ? 1 : 0;
 }
 
-static inline void hr_sleep(long int x, unsigned long y, unsigned long z){
+static inline void hr_sleep(long int x, unsigned long y){
 	asm volatile(
 			"mov %%rbx,%%rdi\n"
-			"mov %%rcx,%%rsi\n"
 			"syscall\n"
-			: : "a" ((unsigned long)(x)), "b" ((unsigned long)(y)), "c" ((unsigned long)(z))
+			: : "a" ((unsigned long)(x)), "b" (y)
 			:
 		    );
 }
@@ -86,7 +90,8 @@ struct ipv6_l3fwd_lpm_route {
 /* 192.18.0.0/16 are set aside for RFC2544 benchmarking. */
 static struct ipv4_l3fwd_lpm_route ipv4_l3fwd_lpm_route_array[] = {
 	{RTE_IPV4(10, 0, 0, 0), 16, 1},
-	{RTE_IPV4(192, 168, 0, 0), 16, 0},
+	{RTE_IPV4(192, 168, 0, 0), 24, 0},
+	{RTE_IPV4(192, 168, 1, 0), 24, 1},
 	{RTE_IPV4(192, 18, 0, 0), 24, 0},
 	{RTE_IPV4(192, 18, 1, 0), 24, 1},
 	{RTE_IPV4(192, 18, 2, 0), 24, 2},
@@ -215,9 +220,6 @@ lpm_get_dst_port_with_ipv4(const struct lcore_conf *qconf, struct rte_mbuf *pkt,
 #include "l3fwd_lpm.h"
 #endif
 
-unsigned long num_tries = 0;
-unsigned long j = 0;
-unsigned int chosen;
 
 /* main processing loop */
 	int
@@ -225,26 +227,30 @@ lpm_main_loop(__attribute__((unused)) void *dummy)
 {
 	struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
 	unsigned lcore_id;
-	uint64_t prev_tsc, diff_tsc, cur_tsc, wakeup = 0, zeropkt=0, sleep=0;
-	double mean = 0, pktseen=0, n=1, rho_local;
-	int i, nb_rx, avail = 0, junk=0, pkts_idle = 0;
-	bool first_loop, got_lock = false;
-	uint16_t portid;
+	uint64_t prev_tsc = rte_rdtsc(), diff_tsc, cur_tsc;
+	double rho_local;
+	int i, j = 0, nb_rx, avail = 0;
+	unsigned int junk = 0;
+	bool got_lock = false;
+	uint16_t portid, tx_portid;
 	uint8_t queueid;
+	uint8_t sec_queues;
 	struct lcore_conf *qconf;
 	const uint64_t drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) /
-		US_PER_S * BURST_TX_DRAIN_US;
-
-	ssize_t num, total, num_l, total_l;
+				US_PER_S * BURST_TX_DRAIN_US;
+	
 	lcore_id = rte_lcore_id();
 	qconf = &lcore_conf[lcore_id];
 
-	unsigned long time_last, busy_time = 0, vacation_time = 0, cycle_mean, n_cycle, tot_busy_tries = 0;
-	unsigned long new_timer, num_packets, n_idle, timeout_local = 20000;
-	float lambda_local, lambda_mean = 0;
-	int fd1;
-	struct timeval util, timestamp;
-	struct rusage current;
+	uint8_t curr_queueid = 0;
+	unsigned long busy_time = 0, vacation_time = 0;
+	unsigned long num_packets = 0, timeout_local = 20000;
+	float lambda_local;
+	struct timespec timer;
+	unsigned long timeout_short;
+	
+	prctl(PR_SET_TIMERSLACK, 1);
+	timer.tv_sec = 0;
 
 	if (qconf->n_rx_queue == 0) {
 		RTE_LOG(INFO, L3FWD, "lcore %u has nothing to do\n", lcore_id);
@@ -259,61 +265,50 @@ lpm_main_loop(__attribute__((unused)) void *dummy)
 				" -- lcoreid=%u portid=%u rxqueueid=%hhu\n",
 				lcore_id, portid, queueid);
 	}
+	curr_queueid = queueid;
 
 	while (!force_quit) {
-
-		num_packets = n_idle = 0;
-
-			/*
-			 * TX burst queue drain
-			 */
-			cur_tsc = rte_rdtsc();
-			diff_tsc = cur_tsc - prev_tsc;
-			if (likely(diff_tsc > drain_tsc)) {
-				for (i = 0; i < qconf->n_tx_port; ++i) {
-					portid = qconf->tx_port_id[i];
-					if (qconf->tx_mbufs[portid].len == 0)
-						continue;
-					send_burst(qconf,
-							qconf->tx_mbufs[portid].len,
-							portid);
-					qconf->tx_mbufs[portid].len = 0;
-				}
-
-				prev_tsc = cur_tsc;
-			}
+		
+			num_packets = 0;
 			
 			//This variable will discriminate whether this thread will sleep for a short period Ts or a long period Tl
 			got_lock = false;
-			//Processing starts is we get the thrlock, otherwise we go directly to the sleep phase
-			if (!trylock(&lock))
-				goto sleep; 
-			got_lock = true;
-			free_tries++;
-			pkts_idle = rte_eth_rx_queue_count(qconf->rx_queue_list[0].port_id, qconf->rx_queue_list[0].queue_id);
+			//Processing starts if we get the trylock, otherwise we go directly to the sleep phase
+						
+#if STATS
+			qm[curr_queueid].lock_tries[lcore_id] += 1;
+#endif
+			if (trylock(&multi_locks[curr_queueid].lock)) {
+				got_lock = true;
+#ifdef STATS
+				free_tries[lcore_id]++;
+				qm[curr_queueid].lock_success[lcore_id] += 1;
+#endif
+			}
+			else {
+				curr_queueid = rte_rand_max(num_queues);
+#ifdef STATS
+				busy_tries[lcore_id] ++;
+#endif
+				goto sleep;
+			}
+			
 			//time2 keeps track of the end of the vacation period (lock is taken)
-			time2 = __rdtscp(&junk);
+			qm[curr_queueid].time2 = __rdtscp(&junk);
 			
 start:	
 			/*
 			 *  Read packet from RX queues
 			 */
 			avail = 0;
-			for (i = 0; i < qconf->n_rx_queue; ++i) {
-				portid = qconf->rx_queue_list[i].port_id;
-				queueid = qconf->rx_queue_list[i].queue_id;
-				//This function retrieves packets in batch from the RX queue, returning the number of received packets
-				nb_rx = rte_eth_rx_burst(portid, queueid, pkts_burst,
+			
+			nb_rx = rte_eth_rx_burst(portid, curr_queueid, pkts_burst,
 						MAX_PKT_BURST);
-				if (nb_rx == 0) {
-					//No more packets are left in the RX queue, we can go to the next queue
-					n_idle++;
-					continue;
-				}
+			
 			//num_packets is the total number of packets retrieved in this busy period
 			num_packets += nb_rx;
 			
-			//If we reah this part of code, it means there are still packets to be processed on the RX queue
+			//If we reach this part of code, it means there are still packets to be processed in the RX queue
 			avail = 1;
 #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON \
 				|| defined RTE_ARCH_PPC_64
@@ -324,82 +319,88 @@ start:
 						portid, qconf);
 #endif /* X86 */
 
-			}
 			//if other packets are still available in the RX queue, jump back to the start
-			if (avail != 0)
+			if (nb_rx != 0)
 				goto start;
 			
 
-			if (likely(!first_time)) {
+			if (likely(!qm[curr_queueid].first_time)) {
 				//If thread reaches this point, it means all queues are empty. We can go to sleep after adaptely choose our next timer
 					//time1 is the last time when the lock was released.
-					//time2 is set by this thread as soon as it gets granted the lock.
+					//time2 is set by this thread as soon as it gets the lock granted.
 					//These values are expressed in clock cycles and thus must be divided for your CPU nominal frequency. Therefore the vacation time experimented by Metronome is:
-					vacation_time = (time2 - time1) / CPU_FREQ;
+					vacation_time = (qm[curr_queueid].time2 - qm[curr_queueid].time1) / CPU_FREQ;
 					//In the same way, we calculate the busy time (NOW - time2)
-					busy_time = (__rdtscp(&junk) - time2) / CPU_FREQ;
+					busy_time = (__rdtscp(&junk) - qm[curr_queueid].time2) / CPU_FREQ;
+					
+#ifdef STATS
+					vacant_period[curr_queueid] += vacation_time;
+					vacant_period_tries[curr_queueid]++;				
+					busy_period[curr_queueid] += busy_time;
+					busy_period_tries[curr_queueid]++;
+#endif
+					
 					//We now calculate the incoming throughput (lambda) in packets per nanosecond. This variable is called local as it is the throughput locally seen by one thread
-					lambda_local = (((float)(num_packets)) * CPU_FREQ) / ((float)(__rdtscp(&junk) - time1));
+					lambda_local = (((float)(num_packets)) * CPU_FREQ) / ((float)(__rdtscp(&junk) - qm[curr_queueid].time1));
 					//the global lambda parameter is updated through an exponential moving average (ALPHA = 0.75)
-					lambda = ALPHA * lambda + (1-ALPHA) * lambda_local;
+					qm[curr_queueid].lambda = ALPHA * qm[curr_queueid].lambda + (1-ALPHA) * lambda_local;
 					//the local rho parameter is updated as described in Section 4 of the paper
 					rho_local = ((double) busy_time) / ((double) busy_time + vacation_time);
-					//Global rho parameter is also update by an exponential moving average.
-					rho = ALPHA * rho + (1 - ALPHA) * rho_local;
+					//Global rho parameter is also updated by an exponential moving average.
+					qm[curr_queueid].rho = ALPHA * qm[curr_queueid].rho + (1 - ALPHA) * rho_local;
 					//The new timeout is set as the formula in Section 4 shows
-					timeout_short = (unsigned long) num_cores * vacation_period * (1 - rho) / (1 - pow(rho, (double) num_cores));
-					
+					timeout_short = (unsigned long) (num_cores * (double) vacation_period * (1 - qm[curr_queueid].rho) / (1 - pow(qm[curr_queueid].rho, num_cores)));
+					//timeout_local is the variable keeping track of how much time this thread is going to sleep
 					timeout_local = timeout_short;
-					if (num_packets == 0)
-						idle_tries++;
 			}
-			if (unlikely(first_packet) && num_packets > 0){
-				getrusage(RUSAGE_SELF, &before);
-				time_before = __rdtscp(&junk);
-				first_packet = false;
-			}
-			time1 = __rdtscp(&junk);
-			lock = 0;
 
-			//TX queue drain
+			if (unlikely(qm[curr_queueid].first_packet)){
+				qm[curr_queueid].first_packet = false;
+			}
+			//before releasing the lock, we update time1 as the moment when the vacation period starts
+			qm[curr_queueid].time1 = __rdtscp(&junk);
+			multi_locks[curr_queueid].lock  = 0;
+
+			//final TX queue drain (no lock is needed for TX queues)
 			cur_tsc = rte_rdtsc();
 			diff_tsc = cur_tsc - prev_tsc;
 			if (likely(diff_tsc > drain_tsc)) {
 				for (i = 0; i < qconf->n_tx_port; ++i) {
-					portid = qconf->tx_port_id[i];
+					tx_portid = qconf->tx_port_id[i];
 					if (qconf->tx_mbufs[portid].len == 0)
 						continue;
 					send_burst(qconf,
 							qconf->tx_mbufs[portid].len,
-							portid);
+							tx_portid);
 					qconf->tx_mbufs[portid].len = 0;
 				}
 
 				prev_tsc = cur_tsc;
 			}
-			//We use this variable not to calculate vacation and busy periods durng the first iteration, when some variables have not been set yet
-			first_time = false;
+			//We use this variable in order not to calculate vacation and busy periods during the first iteration, when some variables have not been set yet
+			qm[curr_queueid].first_time = false;
 sleep:
 			if (!got_lock) {
 				//Sleep for a Tl value if you didn't get the lock
 				//TIMEOUT_LONG is specified in l3fwd.h
 				timeout_local = TIMEOUT_LONG;
 			}
+			//custom_timer_mode is the -m command line parameter (1 for hr_sleep(), 0 for nanosleep())
 			if (custom_timer_mode == 0) {
-				rte_delay_us_sleep(timeout_local/1000);
+				timer.tv_nsec = (long) timeout_local;
+				nanosleep(&timer, NULL);
 			}
 			else {
-				hr_sleep(SYSCALL_ENTRY, timeout_local, 1);
+				hr_sleep(SYSCALL_ENTRY, (long) timeout_local);
 			}
 
-
 		}
-
 		return 0;
-	}
+}
 
-	void
-		setup_lpm(const int socketid)
+
+
+void setup_lpm(const int socketid)
 		{
 			struct rte_lpm6_config config;
 			struct rte_lpm_config config_ipv4;

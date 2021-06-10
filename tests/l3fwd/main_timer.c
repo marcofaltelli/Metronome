@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include <rte_common.h>
 #include <rte_vect.h>
@@ -41,6 +42,7 @@
 #include <rte_udp.h>
 #include <rte_string_fns.h>
 #include <rte_cpuflags.h>
+#include <rte_log.h>
 
 #include <cmdline_parse.h>
 #include <cmdline_parse_etheraddr.h>
@@ -48,13 +50,16 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 #include <fcntl.h>
 #include "l3fwd.h"
+
+#include "cJSON.h"
 
 /*
  * Configurable number of RX/TX ring descriptors
  */
-#define RTE_TEST_RX_DESC_DEFAULT 2048
+#define RTE_TEST_RX_DESC_DEFAULT 4096
 #define RTE_TEST_TX_DESC_DEFAULT 1024
 
 #define MAX_TX_QUEUE_PER_PORT RTE_MAX_ETHPORTS
@@ -65,7 +70,6 @@
 //int custom_timer_mode;
 //unsigned long timeout;
 unsigned int ncores = 0;
-struct timeval total, user, kernel, temp1, temp2;
 
 /* Static global variables used within this file. */
 static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
@@ -129,23 +133,70 @@ static struct lcore_params * lcore_params = lcore_params_array_default;
 static uint16_t nb_lcore_params = sizeof(lcore_params_array_default) /
 				sizeof(lcore_params_array_default[0]);
 
+
+static uint8_t hash_key[40] = {
+	        0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+		        0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+			        0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+				        0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+					        0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A, 0x6D, 0x5A,
+};
+
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
 		.mq_mode = ETH_MQ_RX_RSS,
 		.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
 		.split_hdr_size = 0,
-		.offloads = DEV_RX_OFFLOAD_CHECKSUM,
+		//.offloads = DEV_RX_OFFLOAD_CHECKSUM | DEV_RX_OFFLOAD_RSS_HASH,
 	},
 	.rx_adv_conf = {
 		.rss_conf = {
-			.rss_key = NULL,
-			.rss_hf = ETH_RSS_IP,
+			.rss_key = hash_key,
+			//.rss_hf = ETH_RSS_IP | ETH_RSS_TCP | ETH_RSS_UDP | ETH_RSS_SCTP,
+			.rss_hf = ETH_RSS_FRAG_IPV4 | ETH_RSS_NONFRAG_IPV4_TCP | ETH_RSS_NONFRAG_IPV4_UDP,
 		},
 	},
 	.txmode = {
-		.mq_mode = ETH_MQ_TX_NONE,
+		//.mq_mode = ETH_MQ_TX_NONE,
+		.mq_mode = ETH_MQ_TX_VMDQ_DCB,
 	},
 };
+
+void checkin_stats()
+{
+	FILE *f = fopen(power_file,"r");
+	if (f == NULL)
+		perror("Unable to open file\n");
+	int i = fscanf(f, "%lu", &power_before);
+	if (i != 1)
+		perror("Unable to read power");
+	if (getrusage(RUSAGE_SELF, &before))
+		perror("Unable to get rusage");
+	int dummy = 0;
+	time_before = __rdtscp(&dummy);
+}
+
+void checkout_stats()
+{
+	
+	FILE *f = fopen(power_file,"r");
+	if (f == NULL)
+		perror("Unable to open file\n");
+	int i = fscanf(f, "%lu", &power_after);
+	if (i != 1)
+		perror("Unable to read power");
+	if (getrusage(RUSAGE_SELF, &after))
+		perror("Unable to get rusage");
+	int dummy = 0;
+	time_total = __rdtscp(&dummy) - time_before;
+	power_total = power_after - power_before;
+	timeradd(&after.ru_utime, &after.ru_stime, &cpu_after);
+	timeradd(&before.ru_utime, &before.ru_stime, &cpu_before);
+	timersub(&cpu_after, &cpu_before, &cpu_total);
+
+	
+}
+
 
 static struct rte_mempool *pktmbuf_pool[RTE_MAX_ETHPORTS][NB_SOCKETS];
 static uint8_t lkp_per_socket[NB_SOCKETS];
@@ -178,11 +229,6 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
 	.get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
 	.get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
-unsigned long time_total;
-
-void finalize(FILE *f) {
-	fprintf(f, "%lu\t%f\t\t%ld.%06ld\t\t%ld.%06ld\t\t%ld.%06ld\t%f\n", pkts_to_queue, lambda, total.tv_sec, total.tv_usec, user.tv_sec, user.tv_usec, kernel.tv_sec, kernel.tv_usec, ((float) time_total)/2100000000);
-}
 
 /*
  * Setup lookup methods for forwarding.
@@ -321,12 +367,16 @@ print_usage(const char *prgname)
 		"  --hash-entry-num: Specify the hash entry number in hexadecimal to be setup\n"
 		"  --ipv6: Set if running ipv6 packets\n"
 		"  --parse-ptype: Set to use software to analyze packet type\n"
-		"  --per-port-pool: Use separate buffer pool per port\n\n",
+		"  --per-port-pool: Use separate buffer pool per port\n\n"
+		"====== METRONOME PARAMETERS =======\n\n"
+		"  -V : Vacation period (in nanoseconds)\n"
+		"  -m : Sleep mode (1 for hr_sleep(), 0 for nanosleep())\n\n"
+		,
 		prgname);
 }
 
 static int
-		l2fwd_parse_timer_mode(const char *q_arg)
+		l3fwd_parse_timer_mode(const char *q_arg)
 		{
 			char *end = NULL;
 			int n;
@@ -340,25 +390,14 @@ static int
 			return n;
 		}
 
-static bool
-		l3fwd_parse_adaptive_mode(const char *q_arg)
-		{
-			char *end = NULL;
-			int n;
-
-			/* parse number string */
-			n = (int) strtol(q_arg, &end, 10);
-			return n==1 ? true : false;
-		}
 	static unsigned long
-		l2fwd_parse_timer_period(const char *q_arg)
+		l3fwd_parse_vacation_period(const char *q_arg)
 		{
 			char *end = NULL;
 			unsigned long n;
 
 			/* parse number string */
 			n = strtoul(q_arg, &end, 10);
-			printf("timeout counter is %lu\n", n);
 			if ((q_arg[0] == '\0') || (end == NULL) || (*end != '\0'))
 				return 0;
 
@@ -505,9 +544,8 @@ static const char short_options[] =
 	"P"   /* promiscuous */
 	"L"   /* enable long prefix match */
 	"E"   /* enable exact match */
-	"T:"
-	"m:"
-	"a:"
+	"V:"  /* vacation time (Metronome)*/
+	"m:"  /* timer mode (1 for hr_sleep(), 0 for nanosleep())*/
 	;
 
 #define CMD_LINE_OPT_CONFIG "config"
@@ -598,25 +636,19 @@ parse_args(int argc, char **argv)
 		case 'L':
 			l3fwd_lpm_on = 1;
 			break;
-		case 'T':
-			timeout = l2fwd_parse_timer_period(optarg);
-			vacation_period = timeout;
-			printf("Timer %lu\n", vacation_period);
-			if (timeout == 0) {
-				printf("invalid timer period\n");
+		case 'V':
+			vacation_period = l3fwd_parse_vacation_period(optarg);
+			printf("Vacation period %lu\n", vacation_period);
+			if (vacation_period == 0) {
+				printf("invalid vacation period\n");
 				print_usage(prgname);
 				return -1;
 			}
-			//timer_period = timer_secs;
 			break;
 		case 'm' :
-			custom_timer_mode = l2fwd_parse_timer_mode(optarg);
+			custom_timer_mode = l3fwd_parse_timer_mode(optarg);
 			break;
 
-		case 'a' :
-			adaptive = l3fwd_parse_adaptive_mode(optarg);
-			printf(adaptive ? "Adaptive version enabled\n": "Static version enabled\n");
-			break;
 			/* long options */
 		case CMD_LINE_OPT_CONFIG_NUM:
 			ret = parse_config(optarg);
@@ -855,8 +887,6 @@ signal_handler(int signum)
 		printf("\n\nSignal %d received, preparing to exit...\n",
 				signum);
 		force_quit = true;
-		line_rate = false;
-		//pthread_cond_broadcast(&condition);
 	}
 }
 
@@ -896,16 +926,9 @@ int main(int argc, char **argv)
 	unsigned lcore_id;
 	uint32_t n_tx_queue, nb_lcores;
 	uint8_t nb_rx_queue, queue, socketid;
-	struct rusage after;
-	int dummy = 0;
-	mean_vacation = 0;
-	mean_busy = 0;
-	free_tries = 0;
-	//busy_tries = 0;
-	total_tries = 0;
-	idle_tries = 0;
-	process_tries = 0;
 	
+	rte_log_set_level_regexp("pmd.net.ixgbe.init", RTE_LOG_DEBUG);
+
 	/* init EAL */
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0)
@@ -913,10 +936,11 @@ int main(int argc, char **argv)
 	argc -= ret;
 	argv += ret;
 	
-	first_time = true;
-	pkts_to_queue =150;
-	force_quit = false;
-	line_rate = false;
+	for (int i = 0; i < MAX_QUEUES; i++) {
+		qm[i].first_time = true;
+		qm[i].first_packet = true;
+	}
+	
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 	signal(SIGALRM, signal_handler);
@@ -965,6 +989,10 @@ int main(int argc, char **argv)
 
 		nb_rx_queue = get_port_n_rx_queues(portid);
 		n_tx_queue = nb_lcores;
+		if (nb_rx_queue != 0) {
+			num_queues = nb_rx_queue;
+			printf("RX queues num is %u\n", num_queues);
+		}
 		if (n_tx_queue > MAX_TX_QUEUE_PER_PORT)
 			n_tx_queue = MAX_TX_QUEUE_PER_PORT;
 		printf("Creating queues: nb_rxq=%d nb_txq=%u... ",
@@ -989,6 +1017,7 @@ int main(int argc, char **argv)
 		}
 
 		printf("0. Desc lim is %ud\n",dev_info.rx_desc_lim.nb_max);
+		
 		ret = rte_eth_dev_configure(portid, nb_rx_queue,
 					(uint16_t)n_tx_queue, &local_port_conf);
 		if (ret < 0)
@@ -1146,13 +1175,21 @@ int main(int argc, char **argv)
 		}
 	}
 
-
+	
 	check_all_ports_link_status(enabled_port_mask);
-	num_cores = ncores/2;
-	char cpu_filename[40], power_cmd[96];
+	num_cores = ((double) ncores)/(2 * num_queues);
+	rte_srand(987654321);
+#if STATS
+	checkin_stats();
+#endif
+	//num_cores = ncores / MAX_QUEUES;
+	printf("Num cores is %f, ncores %d\n", num_cores, ncores);
 	ret = 0;
-	first_packet = true;
-	time_before = __rdtscp(&dummy);
+	//prctl() minimizes the timer slack before the kernel takes control and puts our process back into the running queue
+	prctl(PR_SET_TIMERSLACK, 1);
+	//Setting alarm in case of a limited time test, used only for evaluation
+	//alarm(180);
+	tries = 0;
 	rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
 	
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
@@ -1161,10 +1198,9 @@ int main(int argc, char **argv)
 			break;
 		}
 	}
-	if (getrusage(RUSAGE_SELF, &after))
-		perror("Couldn't get CPU usage...");
-	time_total  = __rdtscp(&dummy) - time_before;
-
+#if STATS
+	checkout_stats();
+#endif
 	/* stop ports */
 	RTE_ETH_FOREACH_DEV(portid) {
 		if ((enabled_port_mask & (1 << portid)) == 0)
@@ -1174,17 +1210,75 @@ int main(int argc, char **argv)
 		rte_eth_dev_close(portid);
 		printf(" Done\n");
 	}
-	timeradd(&after.ru_utime, &after.ru_stime, &temp2);
-	timeradd(&before.ru_utime, &before.ru_stime, &temp1);
-	timersub(&temp2, &temp1,&total);
+
+#if STATS
+	uint64_t tot_free_tries = 0, tot_busy_tries = 0;
+	for (int k = 0; k < 32; k++) {
+		tot_free_tries += free_tries[k];
+		tot_busy_tries += busy_tries[k];
+	}
 	
-	timersub(&after.ru_utime, &before.ru_utime, &user);	
-	timersub(&after.ru_stime, &before.ru_stime, &kernel);
+	double cpu_total_secs = ((double) cpu_total.tv_sec) + (((double) cpu_total.tv_usec) / 1000000);
+	double tot_exec_secs = (double) time_total / 2100000000;
+       	double energy_uj = power_total;
+	double power_w = (energy_uj/1000000)/tot_exec_secs;
+	double cpu_usage = 100*cpu_total_secs/tot_exec_secs;	
+	int n_queues = queueid+1;
+	double perc_busy_tries = ((double) tot_busy_tries)/((double)(tot_free_tries + tot_busy_tries));
+    	
+	//////// JSON metrics output //////// 
+	cJSON *results = cJSON_CreateObject();
+	
+        // params
+	cJSON_AddNumberToObject(results, "num_cores", ncores/2);
+        cJSON_AddNumberToObject(results, "num_queues", n_queues);
+
+        // CPU & power	
+        cJSON_AddNumberToObject(results, "tot_exec_time_s", tot_exec_secs);
+        cJSON_AddNumberToObject(results, "tot_cpu_time_s", cpu_total_secs);
+        cJSON_AddNumberToObject(results, "cpu_usage_perc", cpu_usage);
+        cJSON_AddNumberToObject(results, "energy_uj", energy_uj);
+        cJSON_AddNumberToObject(results, "power_w", power_w);
+
+        // system-wide free/busy tries
+        cJSON_AddNumberToObject(results, "tot_free_tries", tot_free_tries);
+        cJSON_AddNumberToObject(results, "tot_busy_tries", tot_busy_tries);
+        cJSON_AddNumberToObject(results, "perc_busy_tries", perc_busy_tries);
+
+	// queue stats
+	cJSON *queues = cJSON_AddArrayToObject(results, "per_queue_stats");
+
+	for(int quid=0; quid < n_queues; quid++) {
+		cJSON *queue_stat = cJSON_CreateObject();
+		
+		double tmp_time = ((double) vacant_period[quid]/(double) vacant_period_tries[quid])/2100.0; 
+		cJSON_AddNumberToObject(queue_stat, "vacant_period_us", tmp_time);
+
+		tmp_time = ((double) busy_period[quid]/(double) busy_period_tries[quid])/2100.0;
+         	cJSON_AddNumberToObject(queue_stat, "busy_period_us", tmp_time);
+		
+		cJSON *per_core_lock_tries = cJSON_AddArrayToObject(queue_stat, "per_core_lock_tries");
+		cJSON *per_core_lock_success = cJSON_AddArrayToObject(queue_stat, "per_core_lock_successes");
+
+		for(int cid = 0; cid < RTE_MAX_LCORE; cid++) {
+                	if (!rte_lcore_is_enabled(cid))
+                        	continue;
+
+			cJSON_AddItemToArray(per_core_lock_tries, cJSON_CreateNumber(qm[quid].lock_tries[cid]));
+			cJSON_AddItemToArray(per_core_lock_success, cJSON_CreateNumber(qm[quid].lock_success[cid]));
+		}
+		
+		cJSON_AddItemToArray(queues, queue_stat);
+	}
+	
+	char result_file_name[30] = {0};
+       	snprintf(result_file_name, 30, "%d_%d_%luns.json", ncores/2, n_queues, vacation_period);
+	
+	FILE *result_file = fopen(result_file_name, "w");
+	fprintf(result_file, "%s", cJSON_Print(results));
+	/////////////////////////////////////
+#endif
 
 	printf("Bye...\n");
-	
-	unsigned long total_busy = 0;
-	for (int n = 0; n < 16; n++)
-		total_busy += busy_tries[n];
 	return ret;
 }

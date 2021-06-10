@@ -104,12 +104,10 @@ module_param_array(free_entries,int,NULL,0660);//default array size already know
 
 #define NO (0)
 #define YES (NO+1)
-#define AUDIT if(0)
 
 
 typedef struct _control_record{
         struct task_struct *task;
-        int pid;
         int awake;
         struct hrtimer hr_timer;
 } control_record;
@@ -128,56 +126,35 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer ){
         return HRTIMER_NORESTART;
 }
 
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-__SYSCALL_DEFINEx(2, _goto_sleep, unsigned long, nanosecs, unsigned long, tries){
+__SYSCALL_DEFINEx(1, _goto_sleep, long, nanoseconds){
 #else
-asmlinkage long sys_goto_sleep(unsigned long nanosecs, unsigned long tries){
+asmlinkage long sys_goto_sleep(long nanoseconds){
 #endif
 
-        DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue 
-        control_record* control;
-        ktime_t ktime_interval;
+	DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue
+	control_record control;
+	ktime_t ktime_interval;
+ 
+	if (nanoseconds < 0)
+		return -EINVAL;
+	if (nanoseconds == 0)
+		return 0;
 
-        AUDIT
-        printk("%s: thread %d requests a sleep for %lu nanosecs on %lu tries\n",MODNAME,current->pid,nanosecs,tries);
+	ktime_interval = ktime_set(0, nanoseconds);
+	hrtimer_init(&(control.hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	control.hr_timer.function = &my_hrtimer_callback;
+	control.task = current;
+	control.awake = NO;
+	hrtimer_start(&(control.hr_timer), ktime_interval, HRTIMER_MODE_REL);
 
-       // if(nanosecs == 0) return 0;
+	wait_event_interruptible(the_queue, control.awake == YES);
+	hrtimer_cancel(&(control.hr_timer));
 
-        AUDIT
-        printk("%s: thread %d going to sleep for %lu nanosecs\n",MODNAME,current->pid,nanosecs);
-
-        ktime_interval = ktime_set( 0, nanosecs );
-
-        control = (control_record*)((void*)current->stack + sizeof(struct thread_info));
-
-        hrtimer_init(&(control->hr_timer), CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-
-        control->hr_timer.function = &my_hrtimer_callback;
-
-redo:
-        control->task = current;
-        control->pid  = control->task->pid; //current->pid is more costly
-        control->awake = NO;
-
-        hrtimer_start(&(control->hr_timer), ktime_interval, HRTIMER_MODE_REL);
-
-
-        wait_event_interruptible(the_queue, control->awake == YES);
-
-        hrtimer_cancel(&(control->hr_timer));
-
-        AUDIT
-        printk("%s: thread %d exiting usleep\n",MODNAME, current->pid);
-
-	tries--;
-	if(tries>0) goto redo;
-
-        return 0;
-
+	if (control.awake == 0)
+		return -EINTR;
+	return 0;
 }
-
-
 
 int target;
 
