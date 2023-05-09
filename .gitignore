@@ -4,4 +4,6 @@ tests/ipsec-gw/build/
 tests/FloWatcher-DPDK/run_to_completion/build/
 hr_sleep/*.o
 hr_sleep/*.ko
+hr_sleep/*.cmd
+hr_sleep/*.order
 hr_sleep/user/a.out

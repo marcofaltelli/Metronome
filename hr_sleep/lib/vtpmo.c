@@ -55,7 +55,8 @@ static inline unsigned long _read_cr3(void) {
 
 //stuff for actual service operations
 #define ADDRESS_MASK 0xfffffffffffff000
-#define PAGE_TABLE_ADDRESS phys_to_virt(_read_cr3() & ADDRESS_MASK)
+//#define PAGE_TABLE_ADDRESS phys_to_virt(_read_cr3() & ADDRESS_MASK)
+#define PAGE_TABLE_ADDRESS __va(_read_cr3() & ADDRESS_MASK)
 #define PT_ADDRESS_MASK 0x7ffffffffffff000
 #define VALID 0x1
 #define MODE 0x100

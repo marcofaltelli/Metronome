@@ -46,7 +46,7 @@ int main(int argc, char** argv){
 	timeout = strtol(argv[2],NULL,10);
 	arg = strtol(argv[1],NULL,10);
 	
-	prctl(PR_SET_TIMERSLACK, 1);	
+//	prctl(PR_SET_TIMERSLACK, 1);	
 	printf("expected number of clock cycles per %lu nanoseconds timeout is %lu\n",timeout,(unsigned long)(scale*timeout)/1000);
 
 	cumulative = 0;
@@ -56,7 +56,7 @@ int main(int argc, char** argv){
 	}
 	time2 = __rdtscp( & junk);
 	cumulative += time2 - time1;
-	printf("hr_sleep average sleep cycles: %lu\n",cumulative/(NUM_TRIES*TRIES));
+	printf("hr_sleep average sleep cycles:\t%lu\n",cumulative/(NUM_TRIES*TRIES));
 
 	struct timespec time;
 	time.tv_nsec = (long) timeout;
@@ -69,6 +69,6 @@ int main(int argc, char** argv){
 	}
 	time2 = __rdtscp( & junk);
 	cumulative += time2 - time1;
-	printf("nanosleep average sleep cycles: %lu\n",cumulative/(NUM_TRIES*TRIES));
+	printf("nanosleep average sleep cycles:\t%lu\n",cumulative/(NUM_TRIES*TRIES));
 	return 0;
 }

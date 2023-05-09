@@ -78,7 +78,18 @@ unsigned long **hacked_syscall_tbl=NULL;
 
 
 void syscall_table_finder(void){
-	hacked_syscall_tbl = (void *) kallsyms_lookup_name("sys_call_table");
+
+	void* (*kallsyms_lookup_name_f)(char*);
+
+	struct kprobe kp;
+	memset(&kp, 0, sizeof(kp));
+	kp.symbol_name = "kallsyms_lookup_name";
+	if (!register_kprobe(&kp)) {
+		kallsyms_lookup_name_f = (void *) kp.addr;
+		unregister_kprobe(&kp);
+	}
+	
+	hacked_syscall_tbl = (void *) kallsyms_lookup_name_f("sys_call_table");
 	printk("%s: syscall table found at %px\n",MODNAME,(void*)(hacked_syscall_tbl));
 	return;
 }
