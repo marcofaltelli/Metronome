@@ -39,6 +39,7 @@
 #include <linux/time.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
+#include <linux/miscdevice.h>
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
@@ -46,7 +47,7 @@
 #include <linux/kallsyms.h>
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it, Marco Faltelli <marco.faltelli@uniroma2.it>>");
+MODULE_AUTHOR("Francesco Quaglia <francesco.quaglia@uniroma2.it>, Giacomo Belocchi <giacomo.belocchi@uniroma2.it>, Marco Faltelli <marco.faltelli@uniroma2.it>, Tom Barbette <tom.barbette@uclouvain.be>");
 MODULE_DESCRIPTION("hr_sleep");
 
 
@@ -136,13 +137,7 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer ){
         return HRTIMER_NORESTART;
 }
 
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-__SYSCALL_DEFINEx(1, _goto_sleep, long, nanoseconds){
-#else
-asmlinkage long sys_goto_sleep(long nanoseconds){
-#endif
-
+inline int do_sleep(long nanoseconds) {
         DECLARE_WAIT_QUEUE_HEAD(the_queue);//here we use a private queue 
         control_record control;
         ktime_t ktime_interval;
@@ -173,6 +168,15 @@ asmlinkage long sys_goto_sleep(long nanoseconds){
 		return -EINTR;
 
         return 0;
+}
+
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
+__SYSCALL_DEFINEx(1, _goto_sleep, long, nanoseconds){
+#else
+asmlinkage long sys_goto_sleep(long nanoseconds){
+#endif
+	return	do_sleep(nanoseconds);
 
 }
 
@@ -203,6 +207,39 @@ static inline void zero_wp(void)
 {
 	write_cr0_forced(read_cr0() & ~0x10000);
 }
+
+static int hrsleep_open(struct inode *inode, struct file *file)
+{
+	//printk("hrsleep opened\n");
+	return 0;
+}
+
+static int hrsleep_release(struct inode *inode, struct file *file)
+{
+	//printk("hrsleep closed\n");
+	return 0;
+}
+
+static int hrsleep_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int retval = 0;
+	retval = do_sleep(arg);
+	return retval;
+}
+
+static const struct file_operations hrsleep_fops = {
+	.owner = THIS_MODULE,
+	.open = &hrsleep_open,
+	.release = &hrsleep_release,
+	.unlocked_ioctl = (void*)&hrsleep_ioctl,
+	.compat_ioctl = (void*)&hrsleep_ioctl
+};
+
+static struct miscdevice hrsleep_device = {
+	MISC_DYNAMIC_MINOR,  //assigns random minor number to hrsleep device
+	"hrsleep",
+	&hrsleep_fops
+};
 
 int init_module(void) {
 	
@@ -241,6 +278,7 @@ int init_module(void) {
 	one_wp();
 
         printk("%s: module correctly mounted\n",MODNAME);
+		int retval = misc_register(&hrsleep_device);
 
         return 0;
 
@@ -255,5 +293,7 @@ void cleanup_module(void) {
         hacked_syscall_tbl[target] = hacked_ni_syscall;
 	one_wp();
         printk("%s: sys-call table restored to its original content\n",MODNAME);
+		misc_deregister(&hrsleep_device);
+
 
 }
