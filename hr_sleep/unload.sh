@@ -1,1 +1,1 @@
-sudo rmmod the_hr_sleep
+sudo rmmod hr_sleep
